@@ -1,0 +1,118 @@
+---
+title: "Time series analysis on pollution measurement data in New York"
+author: "Guillem Bagaria, Juan Sebastian García, Amy Zhang"
+date: "4/2/2018"
+output: html_document
+---
+
+We obtained the data from an old kaggle competition: https://www.kaggle.com/sogun3/uspollution/data. This is much more data than we needed as it includes many different indicators as well as hundreds of locations.
+
+For the mean values of Carbon Monoxide, we will perform a volatility analysis. The objective of this is to do a basic volatility analysis using GARCH.
+
+Setup, loading and data cleaning
+```{r eval=FALSE, include=FALSE}
+rm( list=ls() )
+
+library(fGarch)
+library(tseries)
+library(moments)
+library(dplyr)
+library(data.table)
+source('/Users/guillembp/Desktop/Financial Econometrics/code/Volatility Modelling/lib/utilities.R')
+source('/Users/guillembp/Desktop/Financial Econometrics/code/Volatility Modelling/lib/tarch.R')
+source('/Users/guillembp/Desktop/Financial Econometrics/code/Volatility Modelling/lib/egarch.R')
+
+
+df <- read.csv("/Users/guillembp/Desktop/Financial Econometrics/Project/data/pollution_us_2000_2016.csv", header = TRUE)
+```
+
+```{r}
+# Data cleaning
+df <- df[df$City == "New York",]
+df <- df[df$Site.Num == 133,]
+df <- df[df$Date.Local %like% 2014 |df$Date.Local %like% 2015 |df$Date.Local %like% 2016,]
+df <- df[!is.na(df$CO.Mean),]
+df <- df[ seq(1, nrow(df), 2),]
+```
+
+Plot initial data
+```{r}
+dates <- as.Date(as.character(df[,9]),'%Y-%m-%d')
+
+plot(df$CO.Mean, type = "l", xlab = 'Measurements from 2014 to 2016', ylab = 'Measured CO Mean values')
+```
+
+We notice the seasonality, that appears to increase values in the winter. As we're measuring CO concentration, this is expected as most of the CO will be coming from old home heaters, with insufficient draft, instead of transport.
+
+The analysis is based on the returns, calculated for this data through the formula below.
+
+```{r}
+ret <- diff(log(df$CO.Mean))*100
+
+ret <- c(ret,0)
+
+plot(ret, type = "l", xlab = 'Measurements from 2014 to 2016', ylab = 'Measured CO Mean values')
+```
+
+We observe the data as very noisy. Seasonality is now not in the value, which has become stationary, but is still reflected in the variance.
+
+The data is now prepared to be analysed for volatility.
+
+ Volatility Clustering
+```{r}
+myplot(dates, abs(ret), col='red' )
+abline(h=0, lwd=2)
+
+# ACF ret
+ret.acf <- acf(ret , ylim=c(-0.3,1) , lwd=5 , xlim=c(0,25) , col='darkorange2')
+
+# PACF ret
+ret.acf <- pacf(ret , ylim=c(-0.3,1) , lwd=5 , xlim=c(0,25) , col='darkorange2')
+
+```
+
+The ACF shows that the 2nd and 4th lags are significant, while the PACF shows a slowly decreasing correlation. In order to caputer this we suggest a higher order GARCH.
+
+ GARCH
+```{r}
+garch22 <- garch(ret, order = c(2,2))
+
+summary(garch22)
+
+sigma <- garch22$fitted.values[,1]
+
+myplot( dates , sqrt(252)*sigma , col='red2' )
+
+myplot( dates , ret , col='orange2' )
+lines( dates , 1.96*sigma , col='blue2')
+lines( dates , -1.96*sigma , col='blue2')
+```
+
+# Residuals
+```{r}
+z <- ret/sigma
+myplot( dates , z , col='red2' )
+
+par( mar=c(2,2,0.1,0.1) )
+qqnorm(ret,col='tomato',main='')
+qqline(ret,distribution = qnorm)
+
+par( mar=c(2,2,0.1,0.1) )
+qqnorm(z,col='tomato',main='')
+qqline(z,distribution = qnorm)
+
+jb.r <- jarque.test(ret)
+jb.z <- jarque.test(z[2:length(ret)])
+
+par( mar=c(2,2,0.1,0.1) )
+acf( abs(ret) , lag.max=100 , ylim=c(-0.5,1) , lwd=5 , xlim=c(0,25) , col='darkorange2')
+
+```
+
+The residuals don't follow a normal distribution. However, it appears there to be a very large number of outliers, while the rest do fall in a normality distribution.
+
+It seems that for this data we should include one or more dummy variables to account for exogenous effects that produce the outlying observations, if they can be called that.
+
+The variance is not infinite, so we can find an alternative way to model this. Perhaps a model using a t-Student distribution would prove a better model for this data.
+
+Another further path would be to modify the data using the standard error. 
